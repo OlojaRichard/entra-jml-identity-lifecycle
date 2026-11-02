@@ -1,330 +1,141 @@
-# Microsoft Entra ID JML Identity Lifecycle Automation
+# Microsoft Entra ID Joiner-Mover-Leaver Identity Lifecycle Automation
 
-An Identity and Access Management (IAM) lab demonstrating an automated **Joiner-Mover-Leaver (JML)** lifecycle using **Microsoft Entra ID, Microsoft Graph, PowerShell, RBAC, and least-privilege access principles**.
+PowerShell and Microsoft Graph automation that provisions, transitions and deprovisions Microsoft Entra ID identities, with departmental access expressed as security-group membership.
 
-The project simulates how an IAM engineer can provision identities, modify access as employees change roles, and securely deprovision users when they leave an organization.
+![Microsoft Entra ID](https://img.shields.io/badge/Microsoft%20Entra%20ID-1d4ed8?style=flat-square)
+![Microsoft Graph](https://img.shields.io/badge/Microsoft%20Graph-1d4ed8?style=flat-square)
+![PowerShell](https://img.shields.io/badge/PowerShell-92400e?style=flat-square)
+![RBAC](https://img.shields.io/badge/RBAC-0f766e?style=flat-square)
+![Lab project](https://img.shields.io/badge/Status-Hands--on%20lab-0e1627?style=flat-square)
 
----
-
-## Project Overview
-
-Organizations must ensure that users receive the correct access throughout their employment lifecycle.
-
-This project implements three core IAM processes:
-
-- **Joiner** — Provision a new identity and assign department-based access.
-- **Mover** — Update an existing identity and transition access when responsibilities change.
-- **Leaver** — Disable the identity, revoke sessions, remove access, and validate deprovisioning.
-
-The workflows use PowerShell and Microsoft Graph to manage identities and security groups in Microsoft Entra ID.
+**Author:** Richard Oloja · [Portfolio case study](https://olojarichard.github.io/projects/entra-id-jml-identity-lifecycle/) · [LinkedIn](https://www.linkedin.com/in/olojarichard)
 
 ---
+
+## Overview
+
+Organizations must ensure that users receive the correct access throughout their employment lifecycle — and lose it promptly when it is no longer needed. This lab implements the three events that define that lifecycle:
+
+| Event | Script | What it does |
+|---|---|---|
+| **Joiner** | [`scripts/joiner/New-JMLUser.ps1`](scripts/joiner/New-JMLUser.ps1) | Creates the Entra ID user, populates employee attributes, resolves the department to its RBAC group and assigns membership. |
+| **Mover** | [`scripts/mover/Update-JMLUser.ps1`](scripts/mover/Update-JMLUser.ps1) | Updates department and job title, removes the previous departmental group and assigns the new one. |
+| **Leaver** | [`scripts/leaver/Disable-JMLUser.ps1`](scripts/leaver/Disable-JMLUser.ps1) | Inventories group access, disables the account, revokes sign-in sessions, removes group memberships and validates the final state while retaining the identity for audit. |
+
+Access is never granted to users directly. It flows from the `department` attribute to a corresponding Entra ID security group, so the directory itself expresses the access model and Mover/Leaver become tractable operations.
 
 ## Architecture
 
 ```mermaid
 flowchart TD
     A[Employee Lifecycle Event] --> B[PowerShell JML Automation]
-
     B --> C{Joiner / Mover / Leaver}
-
     C -->|Joiner| D[New-JMLUser.ps1]
     C -->|Mover| E[Update-JMLUser.ps1]
     C -->|Leaver| F[Disable-JMLUser.ps1]
-
     D --> G[Microsoft Graph]
     E --> G
     F --> G
-
     G --> H[Microsoft Entra ID]
-
     H --> I[User Identities]
     H --> J[Security Groups / RBAC]
-
     D --> K[Provision Identity]
-    D --> L[Assign Baseline Access]
-
+    D --> L[Assign Department Group]
     E --> M[Update Attributes]
     E --> N[Remove Obsolete Access]
     E --> O[Assign New Access]
-
     F --> P[Disable Account]
     F --> Q[Revoke Sessions]
-    F --> R[Remove Access]
+    F --> R[Remove Group Access]
     F --> S[Validate Deprovisioning]
 ```
 
-Additional architecture details are available in [`docs/architecture.md`](docs/architecture.md).
+Further detail: [`docs/architecture.md`](docs/architecture.md).
 
----
+## RBAC access model
 
-## JML Workflow
+| Department | Security group | Access model |
+|---|---|---|
+| Information Technology | `GRP-IT-Employees` | Baseline IT department access |
+| Engineering | `GRP-Engineering-Employees` | Baseline Engineering department access |
+| Finance | `GRP-Finance-Employees` | Baseline Finance department access |
+| Human Resources | `GRP-HR-Employees` | Baseline HR department access |
 
-### Joiner
+The lab demonstrates group-membership management driven by department. It does not claim that each group has been bound to downstream application permissions. See [`docs/access-control-matrix.md`](docs/access-control-matrix.md).
 
-The Joiner workflow automates initial identity provisioning.
+## Prerequisites
 
-[`New-JMLUser.ps1`](scripts/joiner/New-JMLUser.ps1)
+- PowerShell 7+ (Windows PowerShell 5.1 also works)
+- Microsoft Graph PowerShell SDK: `Install-Module Microsoft.Graph -Scope CurrentUser`
+- The four security groups above created in the tenant
+- A connection with the scopes the scripts use:
 
-The workflow:
-
-1. Accepts employee information.
-2. Generates identity attributes.
-3. Creates the Entra ID account.
-4. Maps the employee's department to an RBAC security group.
-5. Assigns baseline group-based access.
-6. Returns identity information for validation.
-
-Example lifecycle:
-
-```text
-New Employee
-     ↓
-Create Entra ID Identity
-     ↓
-Configure Employee Attributes
-     ↓
-Determine Department
-     ↓
-Assign RBAC Group
-     ↓
-Validate Provisioning
+```powershell
+Connect-MgGraph -Scopes "User.ReadWrite.All","Group.ReadWrite.All","GroupMember.ReadWrite.All","User.RevokeSessions.All"
 ```
 
----
+For anything beyond a lab, use an app registration or managed identity with only these scopes rather than an interactive Global Administrator session.
 
-### Mover
+## Usage
 
-The Mover workflow handles changes to an employee's role or department.
+```powershell
+# Joiner — provision a new employee
+.\scripts\joiner\New-JMLUser.ps1 -FirstName Taylor -LastName Morgan `
+    -Department Finance -JobTitle "Financial Analyst" `
+    -EmployeeId EMP1002 -TenantDomain contoso.onmicrosoft.com
 
-[`Update-JMLUser.ps1`](scripts/mover/Update-JMLUser.ps1)
+# Mover — transfer to another department
+.\scripts\mover\Update-JMLUser.ps1 -UserPrincipalName taylor.morgan@contoso.onmicrosoft.com `
+    -NewDepartment Engineering -NewJobTitle "Systems Engineer"
 
-The workflow:
-
-1. Retrieves the existing identity.
-2. Determines the current department and access.
-3. Validates the current and target RBAC groups.
-4. Updates department and job-title attributes.
-5. Removes obsolete group access.
-6. Assigns the new department's RBAC group.
-7. Prevents unnecessary RBAC transitions when no department change exists.
-
-Example:
-
-```text
-Finance
-Financial Analyst
-GRP-Finance-Employees
-        ↓
-     MOVER
-        ↓
-Engineering
-Systems Engineer
-GRP-Engineering-Employees
+# Leaver — deprovision
+.\scripts\leaver\Disable-JMLUser.ps1 -UserPrincipalName taylor.morgan@contoso.onmicrosoft.com
 ```
 
----
+`Department` / `NewDepartment` are validated against the four supported values. All Graph calls run with `-ErrorAction Stop` inside `try/catch` and the scripts exit non-zero on failure, so a wrapping pipeline can detect a partial run.
 
-### Leaver
+## Validation
 
-The Leaver workflow performs controlled identity deprovisioning.
+A full lifecycle test was run against a fictional lab identity, **Taylor Morgan (EMP1002)**:
 
-[`Disable-JMLUser.ps1`](scripts/leaver/Disable-JMLUser.ps1)
+| Stage | Transition | Documented result |
+|---|---|---|
+| Joiner | Finance · Financial Analyst · `GRP-Finance-Employees` · account enabled | **PASS** |
+| Mover | Finance → Engineering · Financial Analyst → Systems Engineer · `GRP-Finance-Employees` removed · `GRP-Engineering-Employees` assigned | **PASS** |
+| Leaver | `AccountEnabled = False` · remaining group memberships = 0 · identity retained · safe re-run on the deprovisioned identity | **PASS** |
 
-The workflow:
+These are documented lab results, not production test results. Details in [`docs/evidence/README.md`](docs/evidence/README.md).
 
-1. Retrieves the employee identity.
-2. Inventories existing group-based access.
-3. Disables the Entra ID account.
-4. Revokes active sign-in sessions.
-5. Removes group memberships.
-6. Preserves the identity record for audit/history.
-7. Validates the final deprovisioned state.
+## Security controls demonstrated
 
-Final validation verifies:
+Identity lifecycle management · automated provisioning and deprovisioning · group-based authorization · role-based access control · least privilege · department-based access assignment · removal of obsolete access · account disabling · session revocation · post-change validation · audit-oriented identity retention.
 
-```text
-Account Enabled: False
-Remaining Group Memberships: 0
-```
+## Known limitations
 
----
+Stated plainly so the demonstrated capability is not overstated:
 
-## RBAC Access Model
+- **Mover** exits early when the department is unchanged, even if the requested job title differs; a title-only change is not applied.
+- **Mover** is not transactional: if adding the new group fails after the old group has been removed, there is no automatic rollback.
+- **Joiner** generates the temporary password with `Get-Random`, which is not a cryptographic random source. Acceptable for a lab; replace before production use.
+- **Leaver** removes every object returned by `Get-MgUserMemberOf`. In tenants where that includes directory roles, dynamic groups, role-assignable groups or on-premises-synced groups, removal will fail for those objects. The workflow is validated for the assigned security-group model used in this lab.
+- `Revoke-MgUserSignInSession` invalidates refresh tokens and session cookies; already-issued access tokens remain valid until they expire, so revocation is near-term rather than instantaneous.
+- The scripts are operator-run; there is no HR-system trigger, approval step or logging sink.
 
-Department-based security groups provide baseline authorization.
+## Security considerations
 
-| Department | Security Group |
-|---|---|
-| Information Technology | `GRP-IT-Employees` |
-| Engineering | `GRP-Engineering-Employees` |
-| Finance | `GRP-Finance-Employees` |
-| Human Resources | `GRP-HR-Employees` |
+This repository intentionally excludes tenant IDs, object IDs used in testing, passwords, authentication tokens, client secrets and tenant-specific domains. All identities and employee information are fictional lab data.
 
-This design demonstrates:
-
-- Role-Based Access Control
-- Least privilege
-- Group-based authorization
-- Lifecycle-driven access management
-- Removal of obsolete access
-
-See [`docs/access-control-matrix.md`](docs/access-control-matrix.md) for additional details.
-
----
-
-## Validation Scenario
-
-A lab identity named **Taylor Morgan** was used to validate the complete lifecycle.
-
-### Joiner
-
-```text
-Department: Finance
-Job Title: Financial Analyst
-Group: GRP-Finance-Employees
-Account: Enabled
-```
-
-**Result: PASS**
-
-### Mover
-
-Taylor was transferred:
-
-```text
-Finance → Engineering
-Financial Analyst → Systems Engineer
-```
-
-Access transitioned:
-
-```text
-GRP-Finance-Employees       → Removed
-GRP-Engineering-Employees   → Assigned
-```
-
-**Result: PASS**
-
-### Leaver
-
-The account was deprovisioned.
-
-Final state:
-
-```text
-Account Enabled: False
-Remaining Group Memberships: 0
-```
-
-**Result: PASS**
-
-Detailed validation documentation is available in [`docs/evidence/README.md`](docs/evidence/README.md).
-
----
-
-## Repository Structure
+## Repository structure
 
 ```text
 entra-jml-identity-lifecycle/
-│
 ├── README.md
-│
 ├── scripts/
-│   ├── joiner/
-│   │   ├── README.md
-│   │   └── New-JMLUser.ps1
-│   │
-│   ├── mover/
-│   │   ├── README.md
-│   │   └── Update-JMLUser.ps1
-│   │
-│   └── leaver/
-│       ├── README.md
-│       └── Disable-JMLUser.ps1
-│
+│   ├── joiner/   README.md · New-JMLUser.ps1
+│   ├── mover/    README.md · Update-JMLUser.ps1
+│   └── leaver/   README.md · Disable-JMLUser.ps1
 └── docs/
     ├── architecture.md
     ├── access-control-matrix.md
-    └── evidence/
-        └── README.md
+    └── evidence/README.md
 ```
-
----
-
-## Technologies
-
-- Microsoft Entra ID
-- Microsoft Graph
-- Microsoft Graph PowerShell SDK
-- PowerShell
-- Git
-- GitHub
-
----
-
-## Security Controls Demonstrated
-
-The project demonstrates practical IAM controls including:
-
-- Identity lifecycle management
-- Automated provisioning
-- Automated deprovisioning
-- Role-Based Access Control (RBAC)
-- Least privilege
-- Group-based authorization
-- Access transition during role changes
-- Removal of stale access
-- Account disabling
-- Session revocation
-- Post-change validation
-- Error handling
-- Safe workflow reruns
-- Audit-oriented identity retention
-
----
-
-## Security Considerations
-
-This repository intentionally excludes:
-
-- Tenant IDs
-- Object IDs used during testing
-- Passwords
-- Authentication tokens
-- Client secrets
-- Production credentials
-- Tenant-specific domains
-
-All identities and employee information shown in the project are fictional lab data.
-
----
-
-## Skills Demonstrated
-
-This project demonstrates hands-on experience with:
-
-**Identity Engineering**
-- Joiner-Mover-Leaver lifecycle design
-- Identity provisioning and deprovisioning
-- Access lifecycle management
-- Identity attribute management
-
-**Authorization**
-- RBAC
-- Security groups
-- Least privilege
-- Access remediation
-
-**Automation**
-- PowerShell
-- Microsoft Graph
-- Parameterized scripts
-- Error handling
-- Workflow validation
-
-**Security Operations**
-- Session revocation
-- Account disabling
-- Access verification
-- Audit-oriented identity retention
